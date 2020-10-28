@@ -61,40 +61,6 @@ namespace
 {
 constexpr auto autostart_filename = "multipass.gui.autostart.desktop";
 
-mp::IPAddress get_ip_address(const std::string& iface_name)
-{
-    if (iface_name.size() >= IFNAMSIZ)
-    {
-        throw std::runtime_error(
-            fmt::format("Interface name \"{}\" has more than {} characters", iface_name, IFNAMSIZ - 1));
-    }
-
-    const char* iface = iface_name.c_str();
-    struct ifreq ifr;
-
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-
-    if (fd == -1)
-    {
-        throw std::runtime_error(fmt::format("opening socket for {}: {}", iface_name, std::strerror(errno)));
-    }
-
-    ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
-
-    if (ioctl(fd, SIOCGIFADDR, &ifr) == -1)
-    {
-        throw std::runtime_error(fmt::format("ioctl for {}: {}", iface_name, std::strerror(errno)));
-    }
-
-    if (close(fd) != 0)
-    {
-        throw std::runtime_error(fmt::format("closing socket for {}: {}", iface_name, std::strerror(errno)));
-    }
-
-    return mp::IPAddress(inet_ntoa((reinterpret_cast<struct sockaddr_in*>(&ifr.ifr_addr))->sin_addr));
-}
-
 // The uevent files in /sys have a set of KEY=value pairs, one per line. This function takes as arguments a file
 // with full path and a key, and returns the value associated with that key. If the specified uevent file does not
 // exist, or the key is not found, then the empty string is returned.
@@ -139,15 +105,8 @@ mp::NetworkInterfaceInfo get_physical_interface_info(const std::string& iface_na
     QString iface_name_qstr = QString::fromStdString(iface_name);
     std::string type;
     std::string description;
-    mp::optional<mp::IPAddress> ip_address;
 
     QString ip_output = QString::fromStdString(get_ip_output({"link", "show", "dev", iface_name_qstr}));
-
-    // Get the IP if the interface is up.
-    if (ip_output.contains("state UP"))
-    {
-        ip_address = get_ip_address(iface_name);
-    }
 
     if (ip_output.contains(": " + iface_name_qstr + ": "))
     {
@@ -160,7 +119,7 @@ mp::NetworkInterfaceInfo get_physical_interface_info(const std::string& iface_na
         description = "";
     }
 
-    return mp::NetworkInterfaceInfo{iface_name, type, description, ip_address};
+    return mp::NetworkInterfaceInfo{iface_name, type, description};
 }
 
 } // namespace
@@ -298,28 +257,8 @@ mp::NetworkInterfaceInfo mp::platform::get_virtual_interface_info(const std::str
 {
     std::string type;
     std::string description;
-    mp::optional<mp::IPAddress> ip_address;
 
     QString iface_dir_name = QString::fromStdString(virtual_path);
-
-    // The carrier file only says if the interface is up. If it is, we get the IP.
-    QFile carrier_file(iface_dir_name + "/carrier");
-    if (carrier_file.open(QIODevice::ReadOnly))
-    {
-        auto carrier_line = carrier_file.readLine();
-        carrier_file.close();
-        if (carrier_line[0] == '1')
-        {
-            // Sometimes a virtual interface is up but has no assigned IP address and get_ip_address() throws.
-            try
-            {
-                ip_address = get_ip_address(iface_name);
-            }
-            catch (std::runtime_error&)
-            {
-            }
-        }
-    }
 
     // TUN and TAP devices have a file containing flags. The only way of knowing which one of both types the
     // interface has, is to parse the flags.
@@ -372,7 +311,7 @@ mp::NetworkInterfaceInfo mp::platform::get_virtual_interface_info(const std::str
         }
     }
 
-    mp::NetworkInterfaceInfo iface_info{iface_name, type, description, ip_address};
+    mp::NetworkInterfaceInfo iface_info{iface_name, type, description};
 
     return iface_info;
 }
